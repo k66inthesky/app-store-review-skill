@@ -271,9 +271,16 @@ When App Review rejects a UGC app under 1.2, the rejection lists the precautions
 - [ ] Blocking a user also **notifies the developer** (sends a report to the moderation queue) so the content can be reviewed
 - [ ] The blocked user's content disappears from the blocker's feed, comments, and messages **immediately**, without a refresh or app restart
 
-**Screen recording for App Review:**
-- [ ] Record a screen recording on a physical device that shows the EULA or terms of use agreement presented before registering or logging in, the mechanism to flag objectionable content, and the mechanism to block abusive users
-- [ ] Put the recording in the Notes field of the App Review Information section in App Store Connect. After a 1.2 rejection, App Review asks for this recording in the reply and for future submissions
+The block endpoint should atomically persist both the block and a durable moderation-queue item before returning success. Make retries idempotent so a lost response can be retried without creating duplicate reports. A separate client-side report request can be lost if the app closes or the network fails after the block succeeds. Any later notification delivery should retry from the durable queue.
+
+For immediate hiding, filter content using pending and confirmed blocks, including content arriving from an in-flight fetch. Treat pending blocks as optimistic state: if the request fails, show the failure, reconcile with the server's block state, and offer a retry instead of presenting the block as confirmed.
+
+**Screen recording when requested by App Review:**
+
+App Review may request a physical-device recording as evidence after a 1.2 rejection, as in [this reported rejection](https://github.com/safaiyeh/app-store-review-skill/pull/24#issuecomment-6055102790). Provide it when requested; it is not a universal prerequisite for every UGC submission.
+
+- [ ] If requested, record the EULA or terms of use agreement presented before registering or logging in, the mechanism to flag objectionable content, and the mechanism to block abusive users on a physical device
+- [ ] Provide the recording in the App Review reply and include an accessible link in the Notes field of App Review Information for future submissions when the reviewer requests it
 
 **Swift:**
 ```swift
@@ -285,13 +292,6 @@ When App Review rejects a UGC app under 1.2, the rejection lists the precautions
 Toggle("I agree to the Terms of Use, which have zero tolerance for objectionable content or abusive users", isOn: $agreedToTerms)
 Button("Create Account") { signUp() }
     .disabled(!agreedToTerms)
-
-// ✅ GOOD: block hides content now and reports to the developer
-func blockUser(_ userId: String) async throws {
-    feedStore.removeAllContent(from: userId) // Hide immediately
-    try await api.block(userId: userId)
-    try await api.report(userId: userId, reason: .blockedByUser) // Notify the developer
-}
 ```
 
 **React Native / Expo:**
@@ -305,13 +305,6 @@ const [agreed, setAgreed] = useState(false);
 <Checkbox value={agreed} onValueChange={setAgreed} />
 <Text>I agree to the Terms of Use. There is zero tolerance for objectionable content or abusive users.</Text>
 <Button title="Sign Up" disabled={!agreed} onPress={signUp} />
-
-// ✅ GOOD: block hides content now and reports to the developer
-const blockUser = async (userId: string) => {
-  removePostsFromFeed(userId); // Update local state immediately
-  await api.post(`/users/${userId}/block`);
-  await api.post('/reports', { userId, reason: 'blocked_by_user' }); // Notify the developer
-};
 ```
 
 ### Content That Results in Removal
